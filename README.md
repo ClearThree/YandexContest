@@ -27,3 +27,6 @@ To deploy the app as system service follow these steps:
 3. Do ```sudo mv delivery.service /etc/systemd/system/```
 4. Enable the service with ```sudo systemctl enable delivery.service```
 5. Finally, start the service with ```sudo systemctl start delivery.service```
+
+Note: If the virtualenv you created has the name that differs from "delivenv", then open delivery.service file and change the name to yours in 'Environment=...'
+and 'ExecStart=' paths.
