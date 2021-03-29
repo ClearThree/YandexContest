@@ -43,19 +43,30 @@ def unpack_completed_orders(completed_orders):
 
 def hours_intersect(working_h: List[str], delivery_h: List[str]) -> bool:
     for working_h_step in working_h:
-        working_h_start, working_h_end = transform_to_dt(working_h_step)
+        working_h_range = transform_to_dt(working_h_step)
         for delivery_h_step in delivery_h:
-            delivery_h_start, delivery_h_end = transform_to_dt(delivery_h_step)
-            if (working_h_start <= delivery_h_start) and (working_h_end >= delivery_h_end):
+            delivery_h_range = transform_to_dt(delivery_h_step)
+            if working_h_range.is_overlapped(delivery_h_range):
                 return True
     return False
 
 
 def transform_to_dt(bounds):
     bounds_split = bounds.split('-')
-    bounds_start = time.strptime(bounds_split[0], '%H:%M')
-    bounds_end = time.strptime(bounds_split[1], '%H:%M')
-    return bounds_start, bounds_end
+    time_range = TimeRange(time.strptime(bounds_split[0], '%H:%M'), time.strptime(bounds_split[1], '%H:%M'))
+    return time_range
+
+
+class TimeRange:
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+
+    def is_overlapped(self, time_range):
+        if max(self.start, time_range.start) < min(self.end, time_range.end):
+            return True
+        else:
+            return False
 
 
 class DatabaseConnector:
@@ -185,6 +196,8 @@ class DatabaseConnector:
         while self.mutex:
             await asyncio.sleep(0.1)
         self.mutex = True
+        self.cursor.execute("SELECT id FROM couriers "
+                            f"WHERE id = {courier_id} ").fetchone()
         if 'courier_type' in patch_keys:
             self.cursor.execute(f"UPDATE couriers SET type = '{patch['courier_type']}' "
                                 f"WHERE id = {courier_id}")
@@ -236,7 +249,6 @@ class DatabaseConnector:
                                     ).fetchall())
             invalid_orders = []
             for order in courier_current_orders:
-                print(hours_intersect(courier_working_hours, delivery_time[order]))
                 if not hours_intersect(courier_working_hours, delivery_time[order]):
                     invalid_orders.append(order)
             self.mutex = True
@@ -307,6 +319,8 @@ class DatabaseConnector:
         try:
             order = self.cursor.execute("SELECT order_id, status, courier_id FROM orders "
                                         f"WHERE order_id = {completed_order.order_id} ").fetchone()
+            if not order:
+                raise TypeError(f'No order with id {completed_order.order_id} found')
         except TypeError:
             raise TypeError(f'No order with id {completed_order.order_id} found')
         if order[1] == 0:

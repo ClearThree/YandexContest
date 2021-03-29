@@ -5,7 +5,6 @@ from fastapi.responses import JSONResponse
 from models import *
 from utils import DatabaseConnector
 from sqlite3 import IntegrityError
-import uvicorn
 
 app = FastAPI()
 db = DatabaseConnector()
@@ -94,7 +93,3 @@ async def free_mutex_if_unhandled_error(request: Request, exc: Exception):
     db.mutex = False
     error_message = {'status_code': 500, 'content': jsonable_encoder({'messages': 'Internal error'})}
     return JSONResponse(**error_message)
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
