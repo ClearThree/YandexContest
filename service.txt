@@ -7,7 +7,7 @@ RestartSec=5
 WorkingDirectory=/home/entrant/YandexContest/
 Environment="PATH=$PATH:/home/entrant/.local/bin
 User=entrant
-ExecStart=/home/entrant/.local/bin uvicorn /home/entrant/YandexContest/main:app --host 0.0.0.0 --port 8000
+ExecStart=/home/entrant/.local/bin uvicorn main:app --host 0.0.0.0 --port 8000
 
 [Install]
 WantedBy=multi-user.target
