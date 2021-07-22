@@ -1,10 +1,16 @@
+import tracemalloc
+from sqlite3 import IntegrityError
+from cProfile import Profile
+from pstats import Stats
+
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
 from models import *
-from utils import DatabaseConnector
-from sqlite3 import IntegrityError
+from utils import DatabaseConnector, print_mem_diff_stat
 
 app = FastAPI()
 db = DatabaseConnector()
@@ -33,11 +39,29 @@ async def create_orders(payload: OrdersInput):
 
 @app.post('/orders/assign', status_code=200, response_model=AssignOrdersOutput, response_model_exclude_unset=True)
 async def assign_orders(payload: AssignOrdersInput):
+    profiler = Profile()
+    profiler.enable()
+    tracemalloc.start()
+    start_snapshot = tracemalloc.take_snapshot()
     orders, assign_time = await db.assign_orders_to_courier(payload.courier_id)
+    assign_orders_snapshot = tracemalloc.take_snapshot()
     orders = [{'id': order_id} for order_id in orders]
     response = {'orders': orders}
     if assign_time:
         response['assign_time'] = assign_time
+    final_snapshot = tracemalloc.take_snapshot()
+
+    print()
+    print('start - assign_orders')
+    print_mem_diff_stat(start_snapshot, assign_orders_snapshot)
+
+    print()
+    print('assign_orders - final')
+    print_mem_diff_stat(assign_orders_snapshot, final_snapshot)
+
+    profiler.disable()
+    stats = Stats(profiler).sort_stats('cumtime')
+    stats.print_stats()
     return response
 
 
@@ -50,6 +74,7 @@ async def complete_order(payload: OrderCompleteInput):
 @app.get('/couriers/{courier_id}', status_code=200, response_model=CourierInfo, response_model_exclude_unset=True)
 async def get_courier_info(courier_id):
     return await db.calculate_couriers_rating(courier_id)
+
 
 # Exception handlers
 
@@ -93,3 +118,6 @@ async def free_mutex_if_unhandled_error(request: Request, exc: Exception):
     db.mutex = False
     error_message = {'status_code': 500, 'content': jsonable_encoder({'messages': 'Internal error'})}
     return JSONResponse(**error_message)
+
+if __name__ == '__main__':
+    uvicorn.run(app)

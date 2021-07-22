@@ -1,10 +1,20 @@
 import asyncio
 import sqlite3
 import time
-from models import *
+import tracemalloc
 from itertools import chain
 
+from models import *
+
 DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+
+def print_mem_diff_stat(snapshot1, snapshot2):
+    stats = snapshot2.compare_to(snapshot1, 'lineno')
+    print('-' * 10)
+    for stat in stats[:3]:
+        print(stat)
+    print('-' * 10)
 
 
 def unpack_list(nested_list):
@@ -19,7 +29,7 @@ def unpack_delivery_hours(nested_list):
     result_dict = {}
     for item in nested_list:
         order_id, delivery_hours = item
-        if order_id not in list(result_dict.keys()):
+        if order_id not in result_dict.keys():
             result_dict[order_id] = [delivery_hours]
         else:
             result_dict[order_id].append(delivery_hours)
@@ -139,14 +149,20 @@ class DatabaseConnector:
         self.conn.commit()
 
     async def assign_orders_to_courier(self, courier_id):
+        tracemalloc.start()
+        start_snapshot = tracemalloc.take_snapshot()
         courier_type, courier_max_load, courier_regions, courier_working_hours, courier_current_orders = \
             await self.get_actual_courier_status(courier_id)
+        courier_status_snapshot = tracemalloc.take_snapshot()
         courier_rest_load = courier_max_load - sum(courier_current_orders.values())
         regions_tuple = str(courier_regions)[:-2] + ')' if len(courier_regions) == 1 else str(courier_regions)
         possible_orders = unpack_orders(self.cursor.execute(
             "SELECT order_id, weight FROM orders "
             "WHERE status = 0 "
-            f"AND region IN {regions_tuple} ").fetchall())  # possible_orders = {id: weight}
+            f"AND region IN {regions_tuple} "
+            "ORDER BY date_created DESC "
+            "LIMIT 10000").fetchall())  # possible_orders = {id: weight}
+        possible_orders_snapshot = tracemalloc.take_snapshot()
         if len(possible_orders) == 0:
             return [], None
         order_ids_tuple = tuple(possible_orders.keys())
@@ -156,11 +172,14 @@ class DatabaseConnector:
             self.cursor.execute("SELECT order_id, delivery_hours FROM delivery_hours "
                                 f"WHERE order_id IN {order_ids_tuple} "
                                 ).fetchall())
+        delivery_hours_snapshot = tracemalloc.take_snapshot()
+
         possible_orders_timefiltered = {}
         for possible_order in possible_orders:
             if hours_intersect(courier_working_hours, delivery_time[possible_order]):
                 possible_orders_timefiltered[possible_order] = possible_orders[possible_order]
 
+        timesorted_snapshot = tracemalloc.take_snapshot()
         # выбрать по подходящему весу, назначить куре
         if len(possible_orders_timefiltered) == 0:
             return [], None
@@ -189,6 +208,26 @@ class DatabaseConnector:
             valid_orders = list(courier_current_orders.keys()) + valid_orders
             dt = self.cursor.execute("SELECT min(date_assigned) FROM orders "
                                      f"WHERE courier_id = {courier_id} AND status = 1 ").fetchone()[0]
+        final_snapshot = tracemalloc.take_snapshot()
+        print()
+        print('[INSIDE FUNCTION] start - courier_status')
+        print_mem_diff_stat(start_snapshot, courier_status_snapshot)
+
+        print()
+        print('[INSIDE FUNCTION] courier_status - possible orders')
+        print_mem_diff_stat(courier_status_snapshot, possible_orders_snapshot)
+
+        print()
+        print('[INSIDE FUNCTION] possible orders - delivery_hours')
+        print_mem_diff_stat(possible_orders_snapshot, delivery_hours_snapshot)
+
+        print()
+        print('[INSIDE FUNCTION] delivery_hours - timesorted')
+        print_mem_diff_stat(delivery_hours_snapshot, timesorted_snapshot)
+
+        print()
+        print('[INSIDE FUNCTION] timesorted - final')
+        print_mem_diff_stat(timesorted_snapshot, final_snapshot)
         return valid_orders, dt
 
     async def patch_courier(self, courier_id, patch):
@@ -331,7 +370,7 @@ class DatabaseConnector:
         elif order[1] == 2:
             raise TypeError(f'Order with id {completed_order.order_id} was already completed.')
             # return completed_order.order_id  # Don't know if we should return 400 with the message that the order
-            # # was already completed, or return 200 OK with id ...
+            # was already completed, or return 200 OK with id ...
         else:
             self.mutex = True
             self.cursor.execute(f"UPDATE orders SET status = 2, date_finished = '{completed_order.complete_time}' "

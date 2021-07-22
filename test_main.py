@@ -1,6 +1,8 @@
-import os
 import datetime
+import os
+
 from fastapi.testclient import TestClient
+
 from main import app
 from utils import DATETIME_FORMAT
 
